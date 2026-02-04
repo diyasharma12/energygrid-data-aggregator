@@ -2,6 +2,7 @@ const crypto = require("crypto");
 const axios = require("axios");
 const API_URL = "http://localhost:3000/device/real/query";
 const TOKEN = "interview_token_123";
+const REQUEST_INTERVAL_MS = 1000;
 
 
 function generateSignature(url, token, timestamp) {
@@ -40,20 +41,63 @@ function createBatches(serialNumbers) {
 
   return batches;
 }
+async function fetchBatch(snList) {
+  const timestamp = Date.now().toString();
+  const signature = generateSignature(
+    "/device/real/query",
+    TOKEN,
+    timestamp
+  );
 
-const serials = generateSerialNumbers();
-const batches = createBatches(serials);
+  const response = await axios.post(
+    API_URL,
+    { sn_list: snList },
+    {
+      headers: {
+        timestamp: timestamp,
+        signature: signature
+      }
+    }
+  );
 
-console.log("Total batches:", batches.length);
-console.log("First batch:", batches[0]);
-console.log("Last batch:", batches[batches.length - 1]);
+  return response.data.data;
+}
 
-const testTimestamp = Date.now().toString();
-const testSignature = generateSignature(
-  "/device/real/query",
-  "interview_token_123",
-  testTimestamp
-);
+async function fetchBatchWithRetry(snList, retries = 3) {
+  try {
+    return await fetchBatch(snList);
+  } catch (error) {
+    if (retries <= 0) {
+      throw error;
+    }
 
-console.log("Timestamp:", testTimestamp);
-console.log("Signature:", testSignature);
+    console.log("⚠️ Error occurred. Retrying...");
+    await sleep(2000);
+    return fetchBatchWithRetry(snList, retries - 1);
+  }
+}
+
+async function main() {
+  console.log("🚀 EnergyGrid Data Aggregator Started");
+
+  const serialNumbers = generateSerialNumbers();
+  const batches = createBatches(serialNumbers);
+
+  const allResults = [];
+
+  for (let i = 0; i < batches.length; i++) {
+    console.log(`📡 Processing batch ${i + 1} / ${batches.length}`);
+
+    const batchData = await fetchBatchWithRetry(batches[i]);
+    allResults.push(...batchData);
+
+    await sleep(REQUEST_INTERVAL_MS);
+  }
+
+  console.log("✅ All batches processed successfully");
+  console.log(`📊 Total devices fetched: ${allResults.length}`);
+}
+
+main().catch(error => {
+  console.error("❌ Fatal error:", error.message);
+});
